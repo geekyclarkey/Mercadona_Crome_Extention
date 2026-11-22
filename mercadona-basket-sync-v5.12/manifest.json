@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Mercadona Basket Sync",
+  "version": "5.12.0",
+  "description": "Transfer the new Mercadona basket to Telecompra using product IDs, verifying each item.",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://tienda.mercadona.es/*",
+    "*://www.tienda.mercadona.es/*",
+    "*://telecompra.mercadona.es/*",
+    "*://www.telecompra.mercadona.es/*"
+  ],
+  "action": {
+    "default_popup": "launcher.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
