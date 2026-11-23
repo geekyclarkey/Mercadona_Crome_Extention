@@ -26,13 +26,27 @@
    if(actual!==undefined)details.push('In old basket: '+actual);
    const row=element('div','reportRow');const product=element('div','reportProduct');
    product.append(element('strong','',name),element('small','',details.join(' · ')));
-   const reason=rest.match(/(?:Basket reload timed out[^|]*|not restored[^|]*|Confirmed on final recheck|\|\s*(?:[^|]*error[^|]*))$/i)?.[0];
+   const reason=rest.match(/(?:Basket reload timed out[^|]*|not restored[^|]*|Not present in old basket[^|]*|Stored in old basket cookie[^|]*|Confirmed on final recheck|\|\s*(?:[^|]*error[^|]*))$/i)?.[0];
    if(reason&&kind!=='confirmed')product.append(element('div','reportNote',reason.replace(/^\|\s*/,'')));
-   let status=kind==='confirmed'?'Added':kind==='review'?'Check item':kind==='error'?'Error':'Review';
-   if(kind==='compare')status=/\bMatched\s*$/i.test(rest)?'Matched':'Check item';
+   let status=kind==='confirmed'?'Added':kind==='review'?'Check item':kind==='missing'?'Not found':kind==='unavailable'?'Unavailable':kind==='error'?'Error':'Review';
+   if(kind==='compare')status=/\bMatched\s*$/i.test(rest)?'Matched':'Missing';
+   if(kind==='review'&&/Unavailable on old Mercadona/i.test(rest))status='Unavailable';
+   if(kind==='review'&&/Not visible in old Mercadona/i.test(rest))status='Not visible';
    const badge=element('span','reportState',status);
    if(kind==='compare'&&status==='Check item')badge.style.cssText='background:#fff0d6;color:#936018';
-   row.append(product,element('span','reportQty',qty?'Qty '+qty:''),badge);box.append(row);
+   row.append(product,element('span','reportQty',qty?'Qty '+qty:''),badge);
+   if(['missing','review','unavailable','compare'].includes(kind)&&id&&status!=='Matched'){
+    const action=element('button','findSubstitute','Find substitute');action.type='button';
+    action.addEventListener('click',()=>{
+     const subs=document.getElementById('substitutes');subs.open=true;
+     document.getElementById('subFrom').value=originalId||id;
+     const picker=document.getElementById('sourcePicker');if(picker&&[...picker.options].some(o=>o.value===(originalId||id)))picker.value=originalId||id;
+     document.getElementById('subMessage').textContent='Enter the old Mercadona replacement ID for '+name+'.';
+     subs.scrollIntoView({behavior:'smooth',block:'start'});
+     document.getElementById('subTo').focus({preventScroll:true});
+    });row.append(action);
+   }
+   box.append(row);
   }
   return box;
  }
@@ -49,18 +63,22 @@
   if(comparison){
    const lines=raw.split('\n').filter(s=>s.includes(' | ')&&/Wanted:\s*\d+/.test(s));
    const matched=lines.filter(s=>/\|\s*Matched\s*$/.test(s));const review=lines.filter(s=>!/\|\s*Matched\s*$/.test(s));
-   if(review.length)display.append(section('Needs checking','review',review));
+   if(review.length)display.append(section('Products needing attention','compare',review));
    if(matched.length)display.append(section('Matching products','confirmed',matched));
    return;
   }
-  const buckets={review:[],error:[],confirmed:[]};let active='';
+  const buckets={missing:[],review:[],error:[],confirmed:[],unavailable:[],warning:[]};let active='';
   for(const line of raw.split('\n')){
+   if(line==='UNAVAILABLE / REMOVED FROM OLD BASKET'){active='unavailable';continue}
+   if(line==='AVAILABILITY CHECK WARNINGS'){active='warning';continue}
+   if(line==='NOT TRANSFERRED / NOT IN OLD BASKET'){active='missing';continue}
    if(line==='NOT FOUND / UNVERIFIED'){active='review';continue}
    if(line==='ERRORS'){active='error';continue}
    if(line==='ADDED / CONFIRMED'){active='confirmed';continue}
    if(line.trim()&&active)buckets[active].push(line);
   }
-  if(buckets.review.length)display.append(section('Needs checking','review',buckets.review));
+  if(buckets.unavailable.length||buckets.missing.length||buckets.review.length)display.append(section('Products needing attention','review',[...buckets.unavailable,...buckets.missing,...buckets.review]));
+  if(buckets.warning.length)display.append(section('Availability check warnings','review',buckets.warning));
   if(buckets.error.length)display.append(section('Errors','error',buckets.error));
   if(buckets.confirmed.length)display.append(section('Successfully transferred','confirmed',buckets.confirmed));
  }

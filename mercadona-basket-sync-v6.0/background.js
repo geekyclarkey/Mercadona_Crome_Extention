@@ -31,6 +31,73 @@ function basketSnapshot(){const f=window.frames['rightFrame'];if(!f?.document)th
 function setOne(id,quantity){const f=window.frames['rightFrame'];if(!f?.document||typeof f.SetCookie!=='function')throw Error('Telecompra basket unavailable');const name=f.NAME_COOKIE;if(name!=='cesta')throw Error('Unexpected basket cookie name');const m=f.document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith(name+'='));const original=m?decodeURIComponent(m.slice(name.length+1)):'';const segments=original.split('b').filter(Boolean);const pattern=/^(xc\d+)a(\d+)a$/;if(segments.some(s=>!pattern.test(s)))throw Error('Unrecognised basket format; stopped to protect existing basket');const code='xc'+id;let previous=0;const next=segments.map(s=>{const [,c,q]=s.match(pattern);if(c===code){previous=Number(q);return c+'a'+Math.max(previous,quantity)+'a'}return s});if(!previous)next.unshift(code+'a'+quantity+'a');const written=next.map(s=>s+'b').join('');f.SetCookie(name,written);return {previous,original,written}}
 function reloadBasket(){const f=window.frames['rightFrame'];if(!f)throw Error('rightFrame missing');f.location.reload();return true}
 async function waitBasket(tabId,id,timeout=12000){const end=Date.now()+timeout;let last=null;while(Date.now()<end){await pause(450);try{last=await exec(tabId,basketSnapshot);if(last?.ready&&last.codes?.includes('xc'+id))return {found:true,snapshot:last};if(last?.ready&&last.cookie&&!last.cookie.includes('xc'+id+'a'))return {found:false,snapshot:last}}catch{}}return {found:false,snapshot:last,timeout:true}}
+// A dedicated DelProductoTachado link is the old site's explicit marker
+// for an unavailable item. Do not rely on a CSS class or blank price cell.
+function inspectUnavailable(){
+ const f=window.frames['rightFrame'],doc=f?.document;
+ if(!doc?.getElementById('tblTicket'))throw Error('Old basket is not ready');
+ const hits=[];
+ for(const row of doc.querySelectorAll('#tblTicket tr')){
+  const cell=row.querySelector('td[id^="hiddenxc"]');
+  if(!cell)continue;
+  const match=/^hiddenxc(\d+)$/.exec(cell.id);
+  if(!match)continue;
+  const id=match[1];
+  const links=[...row.querySelectorAll('a[href]')].filter(a=>{
+   const href=(a.getAttribute('href')||'').replace(/\s/g,'');
+   return href==="javascript:DelProductoTachado('xc"+id+"')" || href==='javascript:DelProductoTachado("xc'+id+'")';
+  });
+  if(links.length!==1)continue;
+  hits.push({id,name:(cell.textContent||'').trim().slice(0,220)});
+ }
+ return {ready:true,unavailable:hits};
+}
+function removeOldUnavailable(id){
+ const f=window.frames['rightFrame'],doc=f?.document;
+ if(!doc?.getElementById('tblTicket'))throw Error('Old basket not ready');
+ const cell=doc.getElementById('hiddenxc'+id);
+ const row=cell?.closest('tr');
+ if(!row || !row.closest('#tblTicket'))return {triggered:false,reason:'Product row not found'};
+ const link=[...row.querySelectorAll('a[href]')].find(a=>{
+  const href=(a.getAttribute('href')||'').replace(/\s/g,'');
+  return href==="javascript:DelProductoTachado('xc"+id+"')" || href==='javascript:DelProductoTachado("xc'+id+'")';
+ });
+ if(!link)return {triggered:false,reason:'Exact unavailable-product removal link not found'};
+ // Execute the site's own removal handler in the page's frame context.
+ f.DelProductoTachado('xc'+id);
+ return {triggered:true};
+}
+async function cleanOldUnavailable(tabId,items){
+ const wanted=new Map(items.map(x=>[String(x.id),x]));const removed=[],warnings=[];
+ let found;
+ try{found=await exec(tabId,inspectUnavailable)}catch(e){return {removed,warnings:[{name:'Availability check',reason:e.message}]}}
+ for(const hit of found.unavailable){
+  const item=wanted.get(String(hit.id));if(!item)continue;
+  try{
+   const r=await exec(tabId,removeOldUnavailable,[String(hit.id)]);
+   if(!r?.triggered){warnings.push({...item,reason:r?.reason||'Native removal not triggered'});continue}
+   // The site's native delete action may reload asynchronously. Verify the ID
+   // is gone from BOTH its cookie and the rendered ticket before reporting removal.
+   const end=Date.now()+12000;let verified=false;
+   while(Date.now()<end){
+    await pause(500);
+    try{
+     const state=await exec(tabId,function(id){
+      const f=window.frames['rightFrame'],d=f?.document;
+      if(!d?.getElementById('tblTicket'))return {ready:false};
+      const cookie=d.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('cesta='));
+      const val=cookie?decodeURIComponent(cookie.slice(6)):'';
+      return {ready:true,inCookie:val.split('b').some(x=>x.startsWith('xc'+id+'a')),inTicket:!!d.getElementById('hiddenxc'+id)};
+     },[String(hit.id)]);
+     if(state?.ready&&!state.inCookie&&!state.inTicket){verified=true;break}
+    }catch{}
+   }
+   if(verified)removed.push({...item,oldName:hit.name,reason:'Unavailable on old Mercadona — removed from old basket only'});
+   else warnings.push({...item,reason:'Mercadona removal was triggered but not verified; check old basket'});
+  }catch(e){warnings.push({...item,reason:'Native removal failed: '+e.message})}
+ }
+ return {removed,warnings};
+}
 let busy=false;
 chrome.runtime.onMessage.addListener((m,s,reply)=>{if(!['TRANSFER','STATUS','STOP'].includes(m.type))return;if(m.type==='STATUS'){chrome.storage.local.get('progress').then(x=>reply(x.progress||{status:'idle'}));return true}if(m.type==='STOP'){chrome.storage.local.set({stopRequested:true}).then(()=>reply({status:'stop_requested'}));return true}if(busy){reply({error:'Transfer already running'});return true}busy=true;(async()=>{const {newer,older}=await getTabs();const sourceItems=await exec(newer.id,readCart);if(!sourceItems?.length)throw Error('No products in new basket');
 // Apply saved ID substitutions before the existing cookie-based transfer logic.
@@ -48,7 +115,59 @@ const items=[...targetItems.values()];const before=await exec(older.id,basketSna
  if(!stopped&&!errors.length&&notFound.some(x=>x.reason.startsWith('Basket reload timed out'))){
   try{const finalBasket=await exec(older.id,basketSnapshot);if(finalBasket?.ready){for(let i=notFound.length-1;i>=0;i--){const x=notFound[i];if(x.reason.startsWith('Basket reload timed out')&&finalBasket.codes?.includes('xc'+x.id)){added.push({...x,recoveredAfterTimeout:true});notFound.splice(i,1)}}}}catch{}
  }
- const result={status:stopped?'stopped':errors.length?'stopped_on_error':'complete',total:items.length,sourceTotal:sourceItems.length,processed:added.length+notFound.length+errors.length,added,notFound,errors,note:'Names come from the new Mercadona cart when available. Timeouts are unverified, not necessarily unavailable. Check the old basket and prices before checkout.'};await chrome.storage.local.set({progress:result});return result})().then(reply,e=>reply({error:e.message})).finally(()=>{busy=false});return true});
+ // Final read-only check: distinguish a product absent from BOTH the old
+ // basket ticket and its cookie from an inconclusive timeout. Never delete it.
+ if(!stopped&&!errors.length&&notFound.length){
+  try{
+   const finalBasket=await exec(older.id,basketSnapshot);
+   if(finalBasket?.ready){
+    const cookieIds=new Set(String(finalBasket.cookie||'').split('b').map(s=>/^(xc\d+)a\d+a$/.exec(s)?.[1]).filter(Boolean));
+    for(let i=notFound.length-1;i>=0;i--){
+     const x=notFound[i],code='xc'+x.id;
+     if(finalBasket.codes?.includes(code)||cookieIds.has(code)){
+      // Present in old-site data: do not call it missing.
+      if(finalBasket.codes?.includes(code)){added.push({...x,recoveredAfterTimeout:true});notFound.splice(i,1)}
+      else x.reason='Stored in old basket cookie but not visible in ticket — check manually';
+     }else{
+      x.notTransferred=true;
+      x.reason='Not present in old basket or basket cookie after final check — product ID may be unavailable or different';
+     }
+    }
+   }
+  }catch(e){/* Leave unverified on any failed final inspection. */}
+ }
+ let unavailable=[],availabilityWarnings=[];
+ if(!stopped&&!errors.length){
+  try{
+   const cleanup=await cleanOldUnavailable(older.id,items);
+   unavailable=cleanup.removed;availabilityWarnings=cleanup.warnings;
+   for(const x of unavailable){const i=added.findIndex(y=>y.id===x.id);if(i>=0)added.splice(i,1);
+    const j=notFound.findIndex(y=>y.id===x.id);if(j>=0)notFound.splice(j,1)}
+  }catch(e){availabilityWarnings.push({reason:'Availability check could not complete: '+e.message})}
+ }
+ // v5.18: final visible-ticket verification after unavailable-item cleanup.
+ // Cookie entries alone do not prove that Telecompra accepted an item.
+ if(!stopped&&!errors.length){
+  try{
+   const finalVisible=await exec(older.id,basketSnapshot);
+   if(finalVisible?.ready){
+    const visible=new Set(finalVisible.codes||[]);
+    for(let i=added.length-1;i>=0;i--){
+     const x=added[i];if(!visible.has('xc'+x.id)){
+      added.splice(i,1);
+      notFound.push({...x,notTransferred:true,reason:'Not visible in old Mercadona basket after final verification — find a substitute'});
+     }
+    }
+    for(const x of notFound){
+     if(!visible.has('xc'+x.id)){
+      x.notTransferred=true;
+      x.reason='Not visible in old Mercadona basket after final verification — find a substitute';
+     }
+    }
+   }
+  }catch(e){availabilityWarnings.push({reason:'Final visible-basket verification could not complete: '+e.message})}
+ }
+ const result={status:stopped?'stopped':errors.length?'stopped_on_error':'complete',total:items.length,sourceTotal:sourceItems.length,processed:added.length+notFound.length+errors.length+unavailable.length,added,notFound,errors,unavailable,availabilityWarnings,note:'Only confirmed unavailable items are removed from the old basket. The new basket is never changed. Check prices before checkout.'};await chrome.storage.local.set({progress:result});return result})().then(reply,e=>reply({error:e.message})).finally(()=>{busy=false});return true});
 
 // v4.4 independent comparison and retry handlers. Original TRANSFER/STATUS/STOP implementation above is preserved.
 let maintenanceBusy=false;
@@ -61,7 +180,7 @@ async function basketComparison(){
  const rules=(await chrome.storage.local.get('substitutes')).substitutes||{};const grouped=new Map();
  for(const s of source){const rule=rules[s.id]?.enabled===false?null:rules[s.id];const target=rule&&/^\d+$/.test(String(rule.target||''))?String(rule.target):s.id;
   const entry=grouped.get(target)||{targetId:target,wanted:0,source:[]};entry.wanted+=s.quantity;entry.source.push(s);grouped.set(target,entry)}
- const rows=[];for(const group of grouped.values()){const actual=qty[group.targetId]||0;const names=group.source.map(s=>s.name||'Product').join(' + ');rows.push({name:names,sourceId:group.source.map(s=>s.id).join(', '),targetId:group.targetId,wanted:group.wanted,actual,status:actual>=group.wanted?'Matched':actual===0?'Missing':'Quantity short'})}
+ const rows=[];for(const group of grouped.values()){const actual=basket.codes?.includes('xc'+group.targetId)?(qty[group.targetId]||0):0;const names=group.source.map(s=>s.name||'Product').join(' + ');rows.push({name:names,sourceId:group.source.map(s=>s.id).join(', '),targetId:group.targetId,wanted:group.wanted,actual,status:actual>=group.wanted?'Matched':actual===0?'Missing':'Quantity short'})}
  return {sourceProducts:source.length,sourceUnits:source.reduce((n,s)=>n+s.quantity,0),rows};
 }
 async function retryUnverified(){

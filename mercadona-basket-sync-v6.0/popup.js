@@ -1,5 +1,5 @@
 const result=document.getElementById('result');
-function render(x){if(!x||x.status==='idle'||clearingLog)return;const {status,total,processed,added=[],notFound=[],errors=[],current,error}=x;
+function render(x){if(!x||x.status==='idle'||clearingLog)return;const {status,total,processed,added=[],notFound=[],errors=[],unavailable=[],availabilityWarnings=[],current,error}=x;
  const nameOf=v=>v.name||'(Name unavailable in new cart)';
  const itemText=v=>{
   const base=`${nameOf(v)} | ID: ${v.id} | Qty: ${v.quantity}`;
@@ -7,9 +7,12 @@ function render(x){if(!x||x.status==='idle'||clearingLog)return;const {status,to
   const sources=(v.sources||[]).map(x=>`${x.name||'Product'} [${x.id}]`).join(', ');
   return `${base} | SUBSTITUTE for: ${sources}${v.substituteLabel?' | Label: '+v.substituteLabel:''}`;
  };
- document.getElementById('summary').textContent=error?error:`Status: ${status||'idle'} | Processed: ${processed||0}/${total||0} | Added: ${added.length} | Not found / unverified: ${notFound.length}`;
+ document.getElementById('summary').textContent=error?error:`Status: ${status||'idle'} | Processed: ${processed||0}/${total||0} | Added: ${added.length} | Unverified: ${notFound.length} | Unavailable: ${unavailable.length}`;
  const lines=[];
- if(notFound.length){lines.push('NOT FOUND / UNVERIFIED');for(const v of notFound)lines.push(`${itemText(v)} | ${v.reason||''}`)}
+ if(unavailable.length){lines.push('UNAVAILABLE / REMOVED FROM OLD BASKET');for(const v of unavailable)lines.push(`${itemText(v)} | ${v.reason}`)}
+ if(availabilityWarnings.length){lines.push('AVAILABILITY CHECK WARNINGS');for(const v of availabilityWarnings)lines.push(`${v.name||v.id||'Basket'} | ${v.reason}`)}
+ if(notFound.some(v=>v.notTransferred)){lines.push('NOT TRANSFERRED / NOT IN OLD BASKET');for(const v of notFound.filter(v=>v.notTransferred))lines.push(`${itemText(v)} | ${v.reason||''}`)}
+ if(notFound.some(v=>!v.notTransferred)){lines.push('NOT FOUND / UNVERIFIED');for(const v of notFound.filter(v=>!v.notTransferred))lines.push(`${itemText(v)} | ${v.reason||''}`)}
  if(errors.length){lines.push('\nERRORS');for(const v of errors)lines.push(`${itemText(v)} | ${v.error||''}`)}
  if(added.length){lines.push('\nADDED / CONFIRMED');for(const v of added)lines.push(`${itemText(v)}${v.recoveredAfterTimeout?' | Confirmed on final recheck':''}`)}
  result.textContent=lines.join('\n')||'No product results yet.';

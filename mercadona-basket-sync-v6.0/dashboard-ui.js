@@ -7,7 +7,7 @@
   const p=latestProgress;
   const saved=Object.values(typeof substituteRules==='object'?substituteRules:{});
   $('savedRules').textContent=number(saved.length);
-  const processed=[...(p?.added||[]),...(p?.notFound||[]),...(p?.errors||[])];
+  const processed=[...(p?.added||[]),...(p?.notFound||[]),...(p?.errors||[]),...(p?.unavailable||[])];
   $('usedRules').textContent=p?.total?number(processed.filter(x=>x.substituted).length):'—';
   if(latestComparison?.rows){
    const c=latestComparison;
@@ -17,7 +17,7 @@
   if(p?.total){
    const done=Math.min(Number(p.processed)||0,Number(p.total)||0), total=Number(p.total);
    const pct=total?Math.round(done/total*100):0;
-   const confirmed=(p.added||[]).length,check=(p.notFound||[]).length+(p.errors||[]).length;
+   const confirmed=(p.added||[]).length,check=(p.notFound||[]).length+(p.errors||[]).length+(p.availabilityWarnings||[]).length;
    const running=p.status==='running';
    $('progressTitle').textContent=running?'Transfer in progress':'Last transfer';
    $('progressPercent').textContent=pct+'% processed';
