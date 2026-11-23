@@ -14,16 +14,67 @@ async function readCart(){
   for(const v of candidates){if(typeof v==='string'&&v.trim())return v.trim();if(v&&typeof v==='object'){for(const k of ['es','name','description','title','display_name'])if(typeof v[k]==='string'&&v[k].trim())return v[k].trim()}}
   return null;
  };
+ // Names are not stored in MO-cart. Mercadona's product API is warehouse-aware:
+ // a regional product may be missing from the default catalogue even though
+ // the user's current shop can display it. Do not change any basket data.
+ const productNameFromResponse=payload=>{
+  const product=payload?.product||payload;
+  if(!product||typeof product!=='object')return null;
+  const receivedId=String(product.id??product.product_id??'');
+  return {id:receivedId,name:productName(product)};
+ };
+ const validName=value=>typeof value==='string'&&value.trim().length>3&&value.trim().length<200&&!/^(product|producto|añadir|add to basket)$/i.test(value.trim());
+ const visibleNameById=new Map();
+ const addVisible=(id,el)=>{
+  if(visibleNameById.has(id))return;
+  const nodes=[el,el.closest('[data-testid*="product"], [class*="product-card"], [class*="productCard"], article')].filter(Boolean);
+  for(const node of nodes){
+   const candidates=[node.getAttribute('aria-label'),node.getAttribute('title'),node.querySelector('img[alt]')?.getAttribute('alt'),node.querySelector('[class*="display-name"], [class*="product-name"], [class*="productName"], [class*="title"], h3, h2')?.textContent];
+   for(const value of candidates){if(validName(value)){visibleNameById.set(id,value.replace(/\s+/g,' ').trim());return}}
+  }
+ };
+ try{
+  for(const anchor of document.querySelectorAll('a[href*="/product/"]')){
+   const id=anchor.getAttribute('href')?.match(/\/product\/(\d+)(?:\/|[?#]|$)/)?.[1];
+   if(id)addVisible(id,anchor);
+  }
+ }catch{}
+ for(const item of items)if(!item.name&&visibleNameById.has(item.id))item.name=visibleNameById.get(item.id);
+ // The current store's product endpoint is tried first, followed by explicit
+ // warehouse and versioned API variants only for products whose names are missing.
+ // svq1 is Mercadona's Seville warehouse; other fallbacks cover other regions.
+ const lookup=async(item,url)=>{
+  try{
+   const response=await fetch(url,{credentials:'same-origin',headers:{Accept:'application/json'},signal:AbortSignal.timeout(6500)});
+   if(!response.ok)return false;
+   const parsed=productNameFromResponse(await response.json());
+   if(parsed&&(!parsed.id||parsed.id===item.id)&&validName(parsed.name)){
+    item.name=parsed.name.trim();return true;
+   }
+  }catch{}
+  return false;
+ };
  for(let i=0;i<items.length;i+=4){
   await Promise.all(items.slice(i,i+4).map(async item=>{
    if(item.name)return;
-   try{
-    const response=await fetch('/api/products/'+encodeURIComponent(item.id)+'/?lang=es',{credentials:'same-origin',headers:{'Accept':'application/json'},signal:AbortSignal.timeout(8000)});
-    if(!response.ok)return;
-    const product=await response.json();
-    if(String(product.id??'')===item.id)item.name=productName(product);
-   }catch(e){/* Product detail unavailable: retain ID and continue transfer */}
+   const id=encodeURIComponent(item.id);
+   const urls=[
+    '/api/products/'+id+'/?lang=es',
+    '/api/products/'+id+'/?lang=es&wh=svq1',
+    '/api/v1_1/products/'+id+'?lang=es&wh=svq1',
+    '/api/products/'+id+'/?lang=es&wh=mad1',
+    '/api/products/'+id+'/?lang=es&wh=vlc1'
+   ];
+   for(const url of urls){if(await lookup(item,url))break}
   }));
+ }
+ // Last resort: use a matching product card if the page rendered during lookup.
+ for(const item of items){
+  if(item.name)continue;
+  for(const a of document.querySelectorAll('a[href*="/product/"]')){
+   if(new RegExp('/product/'+item.id+'(?:/|[?#]|$)').test(a.getAttribute('href')||''))addVisible(item.id,a);
+  }
+  if(visibleNameById.has(item.id))item.name=visibleNameById.get(item.id);
  }
  return items;
 }
