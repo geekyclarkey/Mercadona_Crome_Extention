@@ -42,6 +42,10 @@ Until a Chrome Web Store release is available, install it manually:
 
 **Updating an unpacked installation:** Replace the files in the same extension folder, then click **Reload** at `chrome://extensions`. Avoid removing and reinstalling the extension unnecessarily, as this may discard locally saved substitute rules. Export your substitutes first as a backup.
 
+## Versioning
+
+Keep the source in `Mercadona Chrome Extension/` for all versions. When releasing an update, increment the version in `Mercadona Chrome Extension/manifest.json`, update the version shown in the popup and this README, and commit the changes. Use a Git tag such as `v6.3.0` to mark a release; keep older versions in Git history, not in separate source folders.
+
 ## How to use it
 
 1. Open the **new Mercadona** website and add the products you want to your basket. Adjust quantities there.
