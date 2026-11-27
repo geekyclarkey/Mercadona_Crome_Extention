@@ -1,6 +1,6 @@
 # Mercadona Basket Sync
 
-**Version 6.0 · Chrome extension (Manifest V3)**
+**Version 6.3.0 · Chrome extension (Manifest V3)**
 
 Mercadona Basket Sync transfers the products and quantities in your basket on the **new Mercadona online shop** to the **old Mercadona Telecompra website**. It also lets you save substitute product IDs for items that have different codes on the two websites.
 

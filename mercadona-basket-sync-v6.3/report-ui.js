@@ -4,9 +4,10 @@
  const summary=document.getElementById('summary');
  const display=document.getElementById('friendlyReport');
  function element(tag,className,text){const e=document.createElement(tag);if(className)e.className=className;if(text!==undefined)e.textContent=text;return e}
- function section(title,kind,rows){
+ function section(title,kind,rows,compareMode=false){
   const box=element('section','reportSection '+kind);
   const header=element('header');header.append(element('h4','',title),element('span','',rows.length+' '+(rows.length===1?'product':'products')));box.append(header);
+  if(compareMode){const labels=element('div','compareColumnHead');labels.append(element('span','','Product'),element('span','','Wanted'),element('span','','In old'),element('span','','Status'),element('span','',''));box.append(labels);}
   for(const raw of rows){
    const line=raw.trim();if(!line)continue;
    const match=line.match(/^(.*?)\s\|\s(?:ID: (\d+)|New ID: (\d+) → Old ID: (\d+))\s\|\s(.*)$/);
@@ -24,7 +25,7 @@
    if(label)details.push('Label: '+label);
    const actual=rest.match(/In old:\s*(\d+)/i)?.[1];
    if(actual!==undefined)details.push('In old basket: '+actual);
-   const row=element('div','reportRow');const product=element('div','reportProduct');
+   const row=element('div','reportRow'+(compareMode?' comparisonRow':''));const product=element('div','reportProduct');
    product.append(element('strong','',name),element('small','',details.join(' · ')));
    const reason=rest.match(/(?:Basket reload timed out[^|]*|not restored[^|]*|Not present in old basket[^|]*|Stored in old basket cookie[^|]*|Confirmed on final recheck|\|\s*(?:[^|]*error[^|]*))$/i)?.[0];
    if(reason&&kind!=='confirmed')product.append(element('div','reportNote',reason.replace(/^\|\s*/,'')));
@@ -34,7 +35,10 @@
    if(kind==='review'&&/Not visible in old Mercadona/i.test(rest))status='Not visible';
    const badge=element('span','reportState',status);
    if(kind==='compare'&&status==='Check item')badge.style.cssText='background:#fff0d6;color:#936018';
-   row.append(product,element('span','reportQty',qty?'Qty '+qty:''),badge);
+   if(compareMode){
+    const wanted=Number(qty||0),inOld=Number(actual||0);
+    row.append(product,element('span','compareNumber',String(wanted)),element('span','compareNumber '+(inOld>=wanted?'compareGood':'compareBad'),String(inOld)),badge);
+   }else{row.append(product,element('span','reportQty',qty?'Qty '+qty:''),badge);}
    if(['missing','review','unavailable','compare'].includes(kind)&&id&&status!=='Matched'){
     const action=element('button','findSubstitute','Find substitute');action.type='button';
     action.addEventListener('click',()=>{
@@ -45,7 +49,7 @@
      subs.scrollIntoView({behavior:'smooth',block:'start'});
      document.getElementById('subTo').focus({preventScroll:true});
     });row.append(action);
-   }
+   }else if(compareMode){row.append(element('span','compareActionSpacer',''));}
    box.append(row);
   }
   return box;
@@ -63,8 +67,8 @@
   if(comparison){
    const lines=raw.split('\n').filter(s=>s.includes(' | ')&&/Wanted:\s*\d+/.test(s));
    const matched=lines.filter(s=>/\|\s*Matched\s*$/.test(s));const review=lines.filter(s=>!/\|\s*Matched\s*$/.test(s));
-   if(review.length)display.append(section('Products needing attention','compare',review));
-   if(matched.length)display.append(section('Matching products','confirmed',matched));
+   if(review.length)display.append(section('Products needing attention','compare',review,true));
+   if(matched.length)display.append(section('Matching products','confirmed',matched,true));
    return;
   }
   const buckets={missing:[],review:[],error:[],confirmed:[],unavailable:[],warning:[]};let active='';
